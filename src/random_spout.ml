@@ -2,15 +2,19 @@ open Core.Std
 open Async.Std
 open Clusterduck
 
-let spout_func = fun () ->
-  let rnd = Random.int 10 in
-  printf "[Spout] %d\n%!" rnd;
-  return rnd
+let spout_func = fun () dispatcher ->
+  List.init 10 ~f:Fn.id
+  |> List.iter ~f:(fun num -> 
+    printf "[Spout] %d\n%!" num;
+    dispatcher num
+  );
+  return ()
 ;;
 
 let histogram = Int.Table.create ();;
 
 let count_func = fun num ->
+  printf "Received %d\n%!" num;
   let updated =
     match Hashtbl.find histogram num with
     | Some count -> count + 1
@@ -41,7 +45,7 @@ let () =
       ~input:Unit.bin_t
       ~output:Int.bin_t
       ~deps:[]
-      ~f:spout_func
+      ~f:(Worker_desc.Spout spout_func)
   in 
   let count_d =
     Worker_desc.create
@@ -49,7 +53,7 @@ let () =
       ~input:Int.bin_t
       ~output:Unit.bin_t
       ~deps:["spout"]
-      ~f:count_func
+      ~f:(Worker_desc.Worker count_func)
   in
   Builder.add_worker builder spout_d;
   Builder.add_worker builder count_d;
@@ -96,6 +100,7 @@ let () =
           | Ok (Error e) -> failwiths "Dispatch fail" e Error.sexp_of_t
           | Ok (Ok ()) -> printf "Woot\n%!"
         )
+      >>= fun () -> Deferred.never ()
       )
   in
   Spawner.run command

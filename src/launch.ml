@@ -41,6 +41,8 @@ module Worker_shell () = struct
     worker_arg =
 
     let implementations = Hashtbl.find_exn impls_map worker_arg in
+      printf "%s will serve on %d\n%!" worker_arg
+      (Hashtbl.find_exn ports_map worker_arg);
       Rpc.Connection.serve
         ~implementations
         ?max_message_size:rpc_max_message_size
