@@ -2,39 +2,6 @@ open Core.Std
 open Async.Std
 open Rpc_parallel_core.Std
 
-module Worker_desc = struct
-
-  type ('input, 'output) func_type =
-    | Spout of ('input -> ('output -> unit) -> unit Deferred.t)
-    | Worker of ('input -> 'output Deferred.t)
-
-  type ('input, 'output) t =
-    { name    : string
-    ; input   : 'input Bin_prot.Type_class.t
-    ; output  : 'output Bin_prot.Type_class.t
-    ; deps    : string list
-    ; func    : ('input, 'output) func_type
-    }
-
-  let create ~name ~input ~output ?(deps=[]) ~f =
-    { name
-    ; input
-    ; output
-    ; deps
-    ; func = f
-    }
-
-  let rpc_of_t t =
-    Rpc.One_way.create
-      ~name:t.name
-      ~version:0
-      ~bin_msg:t.input
-  ;;
-
-  type any_t = Any : ('input, 'output) t -> any_t
-
-end;;
-
 module Machines = struct
 
   type t = Host_and_port.t Queue.t
@@ -82,7 +49,7 @@ module Builder = struct
    *   C
    *)
   let add_forward_comm 
-    ~(desc: ('i, 'o) Worker_desc.t) 
+    ~(desc : ('i, 'o) Worker_desc.t) 
     ~(subs : (string * Host_and_port.t) list) = 
     (* I distinguish between workers with and without subworkers here
      * because if this was to be actually used in a high throughput 
@@ -105,31 +72,21 @@ module Builder = struct
           >>| fun res ->
           match res with
           | Ok (Ok ())   -> ()
-          | Error      e ->
-            printf "Connection failure from %s to %s: %s\n%!" desc.name name
-              (Error.of_exn e |> Error.sexp_of_t |> Sexp.to_string)
+          | Error      e -> 
+            printf "Connection failure from %s to %s: %s\n%!" 
+              desc.name name (Error.of_exn e |> Error.to_string_hum)
           | Ok (Error e) ->
-            printf "Dispatch failure from %s to %s: %s\n%!" desc.name name
-              (Error.sexp_of_t e |> Sexp.to_string)
+            printf "Dispatch failure from %s to %s: %s\n%!" 
+              desc.name name (Error.to_string_hum e)
           ) >>> fun () -> ()
         in
         `Dispatcher dispatch_func
     in
-    match desc.func with
-    | Spout func  ->
-      let dispatch_func =
-        match dispatcher with
-        | `Do_not_dispatch -> ignore 
-        | `Dispatcher disp -> disp
-      in
-      fun () arg -> func arg dispatch_func >>> fun () -> () 
-    | Worker func ->
-      let dispatch_func =
-        match dispatcher with
-        | `Do_not_dispatch -> ignore
-        | `Dispatcher disp -> fun result -> disp result
-      in
-      fun () arg -> func arg >>> dispatch_func
+    match (desc.func, dispatcher) with
+    | (Spout  func, `Do_not_dispatch) -> fun () arg -> func arg ignore >>> fun () -> ()
+    | (Spout  func, `Dispatcher disp) -> fun () arg -> func arg disp   >>> fun () -> ()
+    | (Worker func, `Do_not_dispatch) -> fun () arg -> func arg >>> ignore
+    | (Worker func, `Dispatcher disp) -> fun () arg -> func arg >>> disp
   ;;
 
   let get_execution_levels descs =
@@ -160,8 +117,8 @@ module Builder = struct
     let execution_levels = get_execution_levels descs in
     let rec process_level ?subtable levels =
       match levels with
-      | []              -> ()
-      | cur_level :: tl ->
+      | []                        -> ()
+      | cur_level :: upper_levels ->
         let next_subs = String.Table.create () in
         (* For each worker in the current execution level:
              1. Find all the workers that depend on this one
@@ -174,56 +131,41 @@ module Builder = struct
           let (Worker_desc.Any desc) = Hashtbl.find_exn descs name in
           (* Get the workers that depend on this one, if any *)
           let subworkers = Option.value_map subtable ~default:[] ~f:(
-            fun table ->
-              Hashtbl.find table desc.name |> Option.value ~default:[]
+            fun tbl -> Hashtbl.find tbl desc.name |> Option.value ~default:[]
           ) 
           in 
-          let rpc   = Worker_desc.rpc_of_t desc in
           let func  = add_forward_comm ~desc ~subs:subworkers in
-          let impls = implement rpc func in
           let box   =
             match Machines.pop_machine machines with
             | Some machine -> machine
-            | None         -> failwithf "Out of machines for worker %s" desc.name ()
+            | None         -> failwithf "No machines for worker %s" desc.name ()
           in
-          Hashtbl.replace Worker_shell.ports_map 
-            ~key:desc.name
-            ~data:(Host_and_port.port box)
-          ;
-          Hashtbl.replace Worker_shell.impls_map ~key:desc.name ~data:impls;
-          Hashtbl.replace location_map ~key:desc.name ~data:box;
-          let next_level = List.hd tl |> Option.value ~default:[] in
-          (* ^ Is nice and compact but should I stick to a pattern match
-           * on tl for readability, as that seems to be the standard way
-           * to handle empty lists? *)
-          List.to_string next_level ~f:(Fn.id) |> Core.Std.printf "Next: %s\n%!";
-          List.iter next_level ~f:(fun name ->
-            if (List.mem desc.deps name) then begin
+          Worker_shell.implement desc func box;
+          Hashtbl.replace location_map ~key:desc.name ~data:box; 
+          let next_level = List.hd upper_levels |> Option.value ~default:[] in
+          List.filter next_level ~f:(List.mem desc.deps) |> List.iter ~f:(
+            fun name ->
               let subs = Hashtbl.find next_subs name |> Option.value ~default:[] in
-              Hashtbl.replace next_subs ~key:name ~data:((desc.name, box) :: subs) 
-            end
+              Hashtbl.replace next_subs ~key:name ~data:((desc.name, box) :: subs)
           );
-        );
-        process_level ~subtable:next_subs tl
+        ); 
+        process_level ~subtable:next_subs upper_levels
     in
     process_level execution_levels;
-    (* Now we've built a module with a filled ports/impls map
-     * and it is safe to attempt to spawn workers. *)
-    let module Spawner = Parallel.Make(Worker_shell) in
-    let spawner = (module Spawner : Launch.Spawner_sig) in
     (* We want to separate the roots and the other workers, as
-     * the others have to be started before the roots. *)
-    let root_names :: tl = List.rev execution_levels in
-    let worker_names = List.concat tl in
-    let lookup_loc = Hashtbl.find_exn location_map in
-    let [roots; workers] = List.map [root_names; worker_names] ~f:(
-      fun names -> List.zip_exn names (List.map names ~f:lookup_loc)
-    ) 
-    in 
-    { Network.roots = roots
-    ; workers
-    ; spawner
-    }
+     * the others have to be started before the roots, and the roots
+     * will require an initial rpc dispatch to start them up. *)
+    match List.rev execution_levels with
+    | []                         -> failwith "build_network: no workers!" 
+    | root_names :: worker_names ->
+      let zip_locs names = 
+        List.zip_exn names (List.map names ~f:(Hashtbl.find_exn location_map))
+      in
+      let module Spawner = Parallel.Make(Worker_shell) in
+      { Network.roots = zip_locs root_names
+      ; workers       = zip_locs (List.concat worker_names)
+      ; spawner       = (module Spawner : Launch.Spawner_sig)
+      }
   ;;
 
 end;;

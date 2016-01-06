@@ -3,12 +3,35 @@ open Async.Std
 open Clusterduck
 
 let spout_func = fun () dispatcher ->
-  List.init 10 ~f:Fn.id
-  |> List.iter ~f:(fun num -> 
-    printf "[Spout] %d\n%!" num;
-    dispatcher num
-  );
-  return ()
+  let test_mon () =
+    let (mon : Monitor.t) = Monitor.current () in
+    printf "%s\n%!" (Monitor.sexp_of_t mon |> Sexp.to_string_hum)
+  in 
+  test_mon ();
+  Clock.every 
+    (Core.Span.of_int_sec 2) 
+    (fun () -> 
+      let rnd = Random.int 10 in
+      match rnd with
+      | 0 ->
+        begin
+          Scheduler.within ~monitor:(Monitor.current ()) (fun () ->
+            raise (Failure "zero spoutage error")
+          );
+          (*printf "Zero spout\n%!";
+          Monitor.try_with (fun () -> 
+            raise (Failure "Spout failed zero");
+            return ()
+          ) >>> function
+          | Ok () -> ()
+          | Error e -> Error.of_exn e |> Error.sexp_of_t |> Sexp.to_string |> printf "%s\n%!"*)
+        end
+      | _ -> 
+        printf "Spout -> %d\n%!" rnd;
+        dispatcher rnd
+    )
+  ;
+  Deferred.never () >>| fun () -> ()
 ;;
 
 let histogram = Int.Table.create ();;
@@ -30,10 +53,8 @@ let generate_local_cluster () =
   List.zip_exn hosts ports
 ;;
 
-let printf = Core.Std.printf
-
 let handle_error worker err =
-  failwiths (sprintf "error in %s" worker) err Error.sexp_of_t
+  printf "ERR!!! %s %s\n%!" worker (Error.sexp_of_t err |> Sexp.to_string)
 ;;
 
 let () =

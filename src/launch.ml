@@ -34,6 +34,21 @@ module Worker_shell () = struct
   let impls_map = String.Table.create ()
   let (ports_map : int String.Table.t) = String.Table.create ()
 
+  let create_rpc_impls rpc func =
+    let impl = Rpc.One_way.implement rpc func in
+    Rpc.Implementations.create_exn ~implementations:[impl]
+      ~on_unknown_rpc:`Close_connection
+  ;;
+
+  let implement (desc: ('i, 'o) Worker_desc.t) func box =
+    let rpc = Worker_desc.rpc_of_t desc in
+    let impls = create_rpc_impls rpc func in
+    Hashtbl.replace impls_map ~key:desc.name ~data:impls;
+    Hashtbl.replace ports_map 
+      ~key:desc.name
+      ~data:(Host_and_port.port box)
+  ;;
+
   let worker_main
     ?rpc_max_message_size
     ?rpc_handshake_timeout
