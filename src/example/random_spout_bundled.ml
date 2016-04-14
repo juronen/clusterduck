@@ -1,3 +1,7 @@
+(** This example shows how to bundle the outputs of multiple workers.
+   A sum type is used to tie together the output of spouts with
+   different output types. *)
+
 open Core.Std
 open Async.Std
 open Clusterduck
@@ -5,7 +9,7 @@ open Clusterduck
 module Bundler_test = struct 
 
   module Subworker = struct 
-    type input = A of int | B of int [@@deriving bin_io, sexp]
+    type input = A of int | B of string [@@deriving bin_io, sexp]
     type output = unit [@@deriving bin_io, sexp]
   end
 
@@ -35,13 +39,13 @@ module Bundler_test = struct
   ;;
 
   let spout_func2 =
-    spout_func ~mapfunc:(fun value -> Subworker.B value)
+    spout_func ~mapfunc:(fun value -> Subworker.B (Int.to_string value))
   ;;
 
   let count_func = fun num1 num2 ->
     let open Subworker in
     let (A a, B b) = (num1, num2) in
-    printf "Received %d %d\n%!" a b;
+    printf "Received %d %s\n%!" a b;
     return ()
   ;;
 
