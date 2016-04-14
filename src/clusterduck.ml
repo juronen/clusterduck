@@ -1,171 +1,158 @@
 open Core.Std
 open Async.Std
-open Rpc_parallel_core.Std
-
-module Machines = struct
-
-  type t = Host_and_port.t Queue.t
-
-  let create ~machines =
-    List.map machines ~f:(fun (host, port) -> Host_and_port.create ~host ~port)
-    |> Queue.of_list
-  ;;
-
-  let pop_machine t = Queue.dequeue t
-
-end;;
+open Rpc_parallel_core_deprecated.Std
 
 module Network = struct
 
   type t =
-    { roots    : (string * Host_and_port.t) list
+    { spouts   : (string * Host_and_port.t) list
     ; workers  : (string * Host_and_port.t) list
-    ; spawner  : (module Launch.Spawner_sig)
+    ; spawner  : (module Launch.Parallel_sig)
     } 
 
 end;;
 
 module Builder = struct
  
+  module Existential = struct
+
+    type t = Any : ('i, 'o) Worker_desc.t -> t
+
+  end;;
+
   type t =
-    { descs    : Worker_desc.any_t String.Table.t
+    { descs    : Existential.t String.Table.t
     ; machines : Machines.t
     }
 
   let create ~machines =
     { descs = String.Table.create ()
-    ; machines
+    ; machines = Machines.create machines
     }
   ;;
 
   let add_worker t (desc : ('i, 'o) Worker_desc.t) =
-    Hashtbl.replace t.descs ~key:desc.name ~data:(Worker_desc.Any desc)
+    Hashtbl.set t.descs ~key:desc.name ~data:(Existential.Any desc)
   ;;
 
-  (* Make workers talk to eachother. E.g. if C depends on A and B, 
-   * add one-way RPC dispatches to make 
-   * A   B
-   *  \ /
-   *   C
-   *)
-  let add_forward_comm 
-    ~(desc : ('i, 'o) Worker_desc.t) 
-    ~(subs : (string * Host_and_port.t) list) = 
-    (* I distinguish between workers with and without subworkers here
-     * because if this was to be actually used in a high throughput 
-     * environment, the useless call to Deferred.List.iter would
-     * probably be undesirable as it actually goes through and
-     * creates a new Deferred etc even if the list is empty. *)
-    let dispatcher =
-      match subs with
-      | []   -> `Do_not_dispatch
-      | subs ->
-        let dispatch_func = fun data ->
-          Deferred.List.iter subs ~f:(fun (name, machine) ->
-          let host = Host_and_port.host machine in
-          let port = Host_and_port.port machine in
-          let rpc = Rpc.One_way.create ~name ~version:0 ~bin_msg:desc.output in
-          Rpc.Connection.with_client ~host ~port
-            (fun conn ->
-               return (Rpc.One_way.dispatch rpc conn data)
-            )
-          >>| fun res ->
-          match res with
-          | Ok (Ok ())   -> ()
-          | Error      e -> 
-            printf "Connection failure from %s to %s: %s\n%!" 
-              desc.name name (Error.of_exn e |> Error.to_string_hum)
-          | Ok (Error e) ->
-            printf "Dispatch failure from %s to %s: %s\n%!" 
-              desc.name name (Error.to_string_hum e)
-          ) >>> fun () -> ()
+  (* I figured that for the user it's more intuitive to reason about
+   * the dependencies that each worker has, rather than all the
+   * sub workers that a worker has to push to, so here we invert this
+   * relationship in order to tell each worker where to send its results. *)
+  let build_subs_map t = 
+    let sub_tbl = String.Table.create () in
+    Hashtbl.iteri t.descs ~f:(fun ~key:worker_name ~data ->
+      let (Existential.Any desc) = data in
+      List.iter desc.deps ~f:(fun parent_worker ->
+        let updated_subs =
+          match Hashtbl.find sub_tbl parent_worker with
+          | None      -> worker_name :: []
+          | Some subs -> worker_name :: subs
         in
-        `Dispatcher dispatch_func
-    in
-    match (desc.func, dispatcher) with
-    | (Spout  func, `Do_not_dispatch) -> fun () arg -> func arg ignore >>> fun () -> ()
-    | (Spout  func, `Dispatcher disp) -> fun () arg -> func arg disp   >>> fun () -> ()
-    | (Worker func, `Do_not_dispatch) -> fun () arg -> func arg >>> ignore
-    | (Worker func, `Dispatcher disp) -> fun () arg -> func arg >>> disp
-  ;;
-
-  let get_execution_levels descs =
-    let topo = Topology.create () in
-    Hashtbl.iter descs ~f:(fun ~key:name ~data:(Worker_desc.Any desc) ->
-      Topology.link topo ~node:name ~deps:desc.deps
+        Hashtbl.set sub_tbl ~key:parent_worker ~data:updated_subs
+      )
     );
-    Topology.coffman_graham_levels topo
+    sub_tbl
   ;;
 
-  let implement rpc func = 
-    let impl = Rpc.One_way.implement rpc func in
-    Rpc.Implementations.create_exn ~implementations:[impl]
-      ~on_unknown_rpc:`Close_connection
+  let assign_machines t =
+    Hashtbl.mapi t.descs ~f:(fun ~key:name ~data:_ ->
+      match Machines.pop_machine t.machines with
+      | Some machine -> machine
+      | None         -> failwithf "Out of machines for worker %s\n%!" name ()
+    )
+  ;;
+
+  let default_on_failure name err =
+    printf "%s %s\n%!" name (Error.to_string_hum err)
+  ;;
+
+  let launch t (network : Network.t)
+    ?(cd="/tmp/clusterduck")
+    ?(on_failure=default_on_failure) () =
+    let module Spawner = (val network.spawner : Launch.Parallel_sig) in
+    let launch workers = 
+      Deferred.List.map workers ~f:(fun (name, machine) ->
+        printf "Spawning %s\n%!" name;
+        let redirect_stdout = `File_append (name ^ ".out") in
+        let redirect_stderr = `File_append (name ^ ".err") in 
+        let host = Host_and_port.host machine in
+        Parallel_deprecated.Remote_executable.copy_to_host
+          ~executable_dir:cd
+          ~strict_host_key_checking:`No
+          host
+        >>= function
+        | Error e   -> 
+          failwithf "Error copying to %s: %s" host (Error.to_string_hum e) ()
+        | Ok remote ->
+          Spawner.spawn_worker_exn name
+            ~where: (`Remote remote)
+            ~cd
+            ~redirect_stdout
+            ~redirect_stderr
+            ~on_failure:(on_failure name)
+          >>| fun (host_and_port, _id) -> 
+          (name, host_and_port)
+      )
+    in
+    launch network.workers 
+    >>= fun _workers ->
+    launch network.spouts
+    >>= fun running_spouts ->
+    Deferred.List.iter running_spouts ~f:(fun (name, machine) ->
+      let (Existential.Any desc) = Hashtbl.find_exn t.descs name in
+      match desc.init with
+      | None      -> failwithf "%s: Spout must be initialized" name ()
+      | Some init ->
+        let rpc =
+          Rpc.One_way.create
+            ~name
+            ~version:0
+            ~bin_msg:desc.input
+        in
+        Rpc_util.one_way_dispatch rpc machine (0, init)
+         >>| function
+         | Ok (Ok ())   ->
+           printf "%s: Succesfully initialized spout\n%!" name
+         | Error e      ->
+           failwithf "%s: Connection failure: %s" name (Exn.to_string e) ()
+         | Ok (Error e) ->
+           failwithf "%s: Dispatch failure: %s" name (Error.to_string_hum e) ()
+
+    )
+    >>= fun () ->
+    Deferred.never ()
   ;;
 
   let build_network t =
-    (* I made Worker_shell a functor to make sure that the
-     * module (and thus the implementation map) passed to the
-     * Parallel.Make functor is unique and not globally accessible.
-     * This seemed like good practice, as I think there exists a reasonable
-     * (or at least not unthinkable) scenario where some master of all 
-     * masters program is used to launch multiple topologies. *)
     let module Worker_shell = Launch.Worker_shell () in
-    let {descs; machines} = t in
-    (* Map name to Host_and_port.t *)
-    let location_map = String.Table.create () in
-    let execution_levels = get_execution_levels descs in
-    let rec process_level ?subtable levels =
-      match levels with
-      | []                        -> ()
-      | cur_level :: upper_levels ->
-        let next_subs = String.Table.create () in
-        (* For each worker in the current execution level:
-             1. Find all the workers that depend on this one
-             2. Create a wrapper for this worker's function,
-                which sends the result to all the dependants over Rpc
-             3. Find workers that this one depends on, add this worker's
-                name/host to a table so it's available for step 1
-                on the next level.*)
-        List.iter cur_level ~f:(fun name ->
-          let (Worker_desc.Any desc) = Hashtbl.find_exn descs name in
-          (* Get the workers that depend on this one, if any *)
-          let subworkers = Option.value_map subtable ~default:[] ~f:(
-            fun tbl -> Hashtbl.find tbl desc.name |> Option.value ~default:[]
-          ) 
-          in 
-          let func  = add_forward_comm ~desc ~subs:subworkers in
-          let box   =
-            match Machines.pop_machine machines with
-            | Some machine -> machine
-            | None         -> failwithf "No machines for worker %s" desc.name ()
-          in
-          Worker_shell.implement desc func box;
-          Hashtbl.replace location_map ~key:desc.name ~data:box; 
-          let next_level = List.hd upper_levels |> Option.value ~default:[] in
-          List.filter next_level ~f:(List.mem desc.deps) |> List.iter ~f:(
-            fun name ->
-              let subs = Hashtbl.find next_subs name |> Option.value ~default:[] in
-              Hashtbl.replace next_subs ~key:name ~data:((desc.name, box) :: subs)
-          );
-        ); 
-        process_level ~subtable:next_subs upper_levels
-    in
-    process_level execution_levels;
-    (* We want to separate the roots and the other workers, as
-     * the others have to be started before the roots, and the roots
-     * will require an initial rpc dispatch to start them up. *)
-    match List.rev execution_levels with
-    | []                         -> failwith "build_network: no workers!" 
-    | root_names :: worker_names ->
-      let zip_locs names = 
-        List.zip_exn names (List.map names ~f:(Hashtbl.find_exn location_map))
+    let machine_map = assign_machines t in
+    let find_machine = Hashtbl.find_exn machine_map in
+    let subworker_map = build_subs_map t in
+    Hashtbl.iteri t.descs ~f:(fun ~key:name ~data:(Existential.Any desc) ->
+      let sub_workers =
+        Hashtbl.find subworker_map name
+        |> Option.value ~default:[]
+        |> List.map ~f:(fun sub -> (sub, find_machine sub))
       in
-      let module Spawner = Parallel.Make(Worker_shell) in
-      { Network.roots = zip_locs root_names
-      ; workers       = zip_locs (List.concat worker_names)
-      ; spawner       = (module Spawner : Launch.Spawner_sig)
+      let port = find_machine name |> Host_and_port.port in
+      Worker_shell.implement desc port sub_workers
+    );
+   (* Separate the spout workers from the others,
+    * as they must be started last and require initialization. *)
+    let (spouts_map, workers_map) = 
+      Hashtbl.partitioni_tf machine_map ~f:(fun ~key ~data:_ ->
+        Hashtbl.mem subworker_map key
+      )
+    in
+    let spouts = Hashtbl.to_alist spouts_map in
+    let workers = Hashtbl.to_alist workers_map in
+    let module Spawner = Parallel_deprecated.Make(Worker_shell) in
+    Network.
+      { spouts
+      ; workers
+      ; spawner = (module Spawner : Launch.Parallel_sig)
       }
   ;;
 
-end;;
+ end;;
