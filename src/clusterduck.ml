@@ -22,12 +22,16 @@ module Builder = struct
 
   type t =
     { descs    : Existential.t String.Table.t
-    ; machines : Machines.t
+    ; machines : Host_and_port.t Queue.t
     }
 
   let create ~machines =
+    let machines =
+      List.map machines ~f:(fun (host, port) -> Host_and_port.create ~host ~port)
+      |> Queue.of_list
+    in
     { descs = String.Table.create ()
-    ; machines = Machines.create machines
+    ; machines
     }
   ;;
 
@@ -57,7 +61,7 @@ module Builder = struct
 
   let assign_machines t =
     Hashtbl.mapi t.descs ~f:(fun ~key:name ~data:_ ->
-      match Machines.pop_machine t.machines with
+      match Queue.dequeue t.machines with
       | Some machine -> machine
       | None         -> failwithf "Out of machines for worker %s\n%!" name ()
     )

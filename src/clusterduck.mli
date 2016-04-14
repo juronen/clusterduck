@@ -28,7 +28,7 @@ module Builder : sig
 
   type t = 
     { descs    : Existential.t String.Table.t
-    ; machines : Machines.t
+    ; machines : Host_and_port.t Queue.t
     }
 
 
