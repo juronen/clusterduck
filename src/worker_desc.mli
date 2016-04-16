@@ -1,3 +1,13 @@
+(** This module provides a type that holds everything needed to describe
+    a Clusterduck worker:
+      - name
+      - input and output bin_t's
+      - the worker's dependencies
+      - the initialization value used to start up spouts
+      - the function that is called with messages the worker receives
+      - optional sequencer *)
+
+
 open Core.Std
 open Async.Std
 
@@ -34,7 +44,9 @@ end
 
 (** [create_simple] returns a t that describes a worker which
     may either be a spout (data source), or a worker that depends
-    on spouts or other workers for its inputs. *)
+    on spouts or other workers for its inputs. To create a spout,
+    pass the function in as `Spout f, and to create a basic worker
+    use `Worker f. *)
 val create_simple :
   (module Worker_IO with type input = 'a and type output = 'b) 
   -> name:string 
@@ -45,7 +57,9 @@ val create_simple :
 
 (** [create_bundled] is used to create a worker that depends on multiple
     upstream workers, which together produce batches (bundles) of
-    messages which this worker consumes. *)
+    messages which this worker consumes. Up to 5 upstream workers can be
+    bundled: for example, a function that bundles 3 would be passed in as
+    `A3 f. *)
 val create_bundled :
   (module Worker_IO with type input = 'a and type output = 'b) 
   -> name:string 

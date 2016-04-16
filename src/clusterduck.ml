@@ -14,14 +14,16 @@ end;;
 
 module Builder = struct
  
-  module Existential = struct
+  module Any_worker = struct
 
+    (** Hide the type parametrization of a worker so we can store
+        them in a single container. *)
     type t = Any : ('i, 'o) Worker_desc.t -> t
 
   end;;
 
   type t =
-    { descs    : Existential.t String.Table.t
+    { descs    : Any_worker.t String.Table.t
     ; machines : Host_and_port.t Queue.t
     }
 
@@ -36,17 +38,17 @@ module Builder = struct
   ;;
 
   let add_worker t (desc : ('i, 'o) Worker_desc.t) =
-    Hashtbl.set t.descs ~key:desc.name ~data:(Existential.Any desc)
+    Hashtbl.set t.descs ~key:desc.name ~data:(Any_worker.Any desc)
   ;;
 
-  (* I figured that for the user it's more intuitive to reason about
-   * the dependencies that each worker has, rather than all the
-   * sub workers that a worker has to push to, so here we invert this
-   * relationship in order to tell each worker where to send its results. *)
+  (** I figured that for the user it's more intuitive to reason about
+      the dependencies that each worker has, rather than all the
+      sub workers that a worker has to push to, so here we invert this
+      relationship in order to tell each worker where to send its results. *)
   let build_subs_map t = 
     let sub_tbl = String.Table.create () in
     Hashtbl.iteri t.descs ~f:(fun ~key:worker_name ~data ->
-      let (Existential.Any desc) = data in
+      let (Any_worker.Any desc) = data in
       List.iter desc.deps ~f:(fun parent_worker ->
         let updated_subs =
           match Hashtbl.find sub_tbl parent_worker with
@@ -104,7 +106,7 @@ module Builder = struct
     launch network.spouts
     >>= fun running_spouts ->
     Deferred.List.iter running_spouts ~f:(fun (name, machine) ->
-      let (Existential.Any desc) = Hashtbl.find_exn t.descs name in
+      let (Any_worker.Any desc) = Hashtbl.find_exn t.descs name in
       match desc.init with
       | None      -> failwithf "%s: Spout must be initialized" name ()
       | Some init ->
@@ -133,7 +135,7 @@ module Builder = struct
     let machine_map = assign_machines t in
     let find_machine = Hashtbl.find_exn machine_map in
     let subworker_map = build_subs_map t in
-    Hashtbl.iteri t.descs ~f:(fun ~key:name ~data:(Existential.Any desc) ->
+    Hashtbl.iteri t.descs ~f:(fun ~key:name ~data:(Any_worker.Any desc) ->
       let sub_workers =
         Hashtbl.find subworker_map name
         |> Option.value ~default:[]
@@ -142,8 +144,8 @@ module Builder = struct
       let port = find_machine name |> Host_and_port.port in
       Worker_shell.implement desc port sub_workers
     );
-   (* Separate the spout workers from the others,
-    * as they must be started last and require initialization. *)
+    (* Separate the spout workers from the others,
+       as they must be started last and require initialization. *)
     let (spouts_map, workers_map) = 
       Hashtbl.partitioni_tf machine_map ~f:(fun ~key ~data:_ ->
         Hashtbl.mem subworker_map key

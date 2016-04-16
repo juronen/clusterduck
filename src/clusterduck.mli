@@ -17,20 +17,7 @@ end
 
 module Builder : sig
 
-  module Existential : sig
-
-    (** This type hides the parameters of a Worker_desc.t,
-        which allows us to store descs of multiple parametrizations
-        in a container. *)
-    type t = Any : ('i, 'o) Worker_desc.t -> t
-
-  end
-
-  type t = 
-    { descs    : Existential.t String.Table.t
-    ; machines : Host_and_port.t Queue.t
-    }
-
+  type t 
 
   (** [create ~machines] creates a Builder.t that
       can be used to build a Clusterduck network. *)
