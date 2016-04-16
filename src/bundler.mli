@@ -41,11 +41,13 @@ module Make : functor (D : sig type t end) -> sig
       a key, which in the case of Clusterduck corresponds to the name of the
       upstream worker that the message was received from.
 
-      A bundle is complete when a value has been determined for each
-      key in the list of keys that the bundler was created with. When the first
-      value is set for a bundle, [update] returns `New 'a list Deferred.t,
-      which becomes determined when the Ivar corresponding to each
-      key is filled. Subsequent calls to [update] will return `Active. *)
+      Internally, a bundle holds a table of keys and Ivars, which are filled
+      with values corresponding to the keys. Once the Ivar for each key is
+      filled for a certain sequence id, the bundle is "complete":
+      the first call to [update] returns `New 'a list Deferred.t,
+      where the deferred list holds the values in the same order as the
+      keys were in when passed to [create]. Subsequent calls to [update]
+      will just return `Active. *)
 
   module Bundle : sig
 
