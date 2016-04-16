@@ -18,7 +18,7 @@ val create : ?first:int -> unit -> t
 (** [enqueue t id task] will place task into a table of pending tasks,
     and executes it if id = t.next. As many subsequent tasks as possible
     are ran - if the table contains ids 2, 3, 4 and t.next is 1, when
-    a task with id 1 is enqueued all of the will be executed in order. *)
+    a task with id 1 is enqueued all of them will be executed in order. *)
 val enqueue :
   t 
   -> int 
