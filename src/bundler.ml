@@ -24,57 +24,49 @@ module Dyn_application = struct
            
 end;;
 
-module type Fill_type = sig
-
-  type t 
-
-end;;
-
 module Fill_result = struct
 
   type 'a t = [`Active | `New of 'a list Deferred.t]
 
 end
 
-module Make_bundle (D : Fill_type) = struct
+module Make (D : sig type t end) = struct
 
-  (** The reason we need to store the keys even after the creation of
-      the table is to make sure [wait_complete] returns the contents
-      in the same order as the list that was passed in to [create] is.
+  module Bundle = struct
 
-      Relying on the table's ordering of the keys has resulted in bad times. *)
+    (** The reason we need to store the keys even after the creation of
+        the table is to make sure [wait_complete] returns the contents
+        in the same order as the list that was passed in to [create] is.
 
-  type t = 
-    { keys : string list
-    ; tbl : D.t Ivar.t String.Table.t
-    }
+        Relying on the table's ordering of the keys has resulted in bad times. *)
 
-  let create keys =
-    let tbl = 
-      List.init (List.length keys) ~f:(fun _ -> Ivar.create ())
-      |> List.zip_exn keys
-      |> String.Table.of_alist_exn 
-    in
-    { keys; tbl }
-  ;;
+    type t = 
+      { keys : string list
+      ; tbl : D.t Ivar.t String.Table.t
+      }
 
-  let fill t key value = 
-    let ivar = Hashtbl.find_exn t.tbl key in
-    Ivar.fill ivar value
-  ;;
+    let create keys =
+      let tbl = 
+        List.init (List.length keys) ~f:(fun _ -> Ivar.create ())
+        |> List.zip_exn keys
+        |> String.Table.of_alist_exn 
+      in
+      { keys; tbl }
+    ;;
 
-  let wait_complete t =
-    List.map t.keys ~f:(fun key ->
-      Ivar.read (Hashtbl.find_exn t.tbl key)
-    )
-    |> Deferred.all
-  ;;
+    let fill t key value = 
+      let ivar = Hashtbl.find_exn t.tbl key in
+      Ivar.fill ivar value
+    ;;
 
-end;;
+    let wait_complete t =
+      List.map t.keys ~f:(fun key ->
+        Ivar.read (Hashtbl.find_exn t.tbl key)
+      )
+      |> Deferred.all
+    ;;
 
-module Make (D : Fill_type) = struct
-
-  module Bundle = Make_bundle(D)
+  end;;
 
   type t =
     { keys : string list

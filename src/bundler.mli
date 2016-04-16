@@ -24,33 +24,13 @@ module Dyn_application : sig
 
 end
 
-module type Fill_type = sig
-
-  (** Functionally, this just acts as an intermediate between
-      Worker_IO.input and Bundler. The reason that it exists is that
-      Bundler turned out fairly neat, and as a module is completely
-      independent of the actual use case here, so I figured that
-      using a completely context-free module/type name would be a thing to do.*)
-
-  type t 
-  
-end
-
-module Make_bundle : functor (D : Fill_type) -> sig
-
-  (** This does not need to be exported - is there a way to hide it since
-      it is needed in the signature of Make below? *)
-  type t 
-
-end
-
 module Fill_result : sig
 
   type 'a t = [`Active | `New of 'a list Deferred.t]
 
 end
 
-module Make : functor (D : Fill_type) -> sig
+module Make : functor (D : sig type t end) -> sig
 
   (** This functor returns a Bundler, which can be used to group (bundle)
       together values that are "pushed" asynchronously from some source.
@@ -69,7 +49,7 @@ module Make : functor (D : Fill_type) -> sig
 
   module Bundle : sig
 
-    type t = Make_bundle(D).t 
+    type t 
 
   end
 
