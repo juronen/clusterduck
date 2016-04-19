@@ -47,8 +47,7 @@ module Make (D : sig type t end) = struct
 
     let create keys =
       let tbl = 
-        List.init (List.length keys) ~f:(fun _ -> Ivar.create ())
-        |> List.zip_exn keys
+        List.map keys ~f:(fun key -> (key, Ivar.create ()))
         |> String.Table.of_alist_exn 
       in
       { keys; tbl }
