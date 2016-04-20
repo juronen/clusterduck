@@ -44,10 +44,10 @@ module Worker_shell () = struct
           in
           Rpc_util.one_way_dispatch rpc machine (id, msg)
           >>| function
-          | Ok (Ok ())                    -> ()
-          | (Error _ | Ok (Error _)) as e ->
+          | Ok (Ok ()) -> ()
+          | error      ->
             unsubscribe sub_name;
-            print_rpc_error e desc.name sub_name
+            print_rpc_error error desc.name sub_name
         )
   ;;
 

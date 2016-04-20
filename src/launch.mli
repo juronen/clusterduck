@@ -85,4 +85,4 @@ module type Parallel_sig = sig
     -> Command.t
     -> unit
 
-end;;
+end
