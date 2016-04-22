@@ -16,7 +16,7 @@ module Builder = struct
  
   module Any_worker = struct
 
-    (** Hide the type parametrization of a worker so we can store
+    (** Hide the type parameterization of a worker so we can store
         them in a single container. *)
     type t = Any : ('i, 'o) Worker_desc.t -> t
 
@@ -41,19 +41,14 @@ module Builder = struct
     Hashtbl.set t.descs ~key:desc.name ~data:(Any_worker.Any desc)
   ;;
 
-  (** I figured that for the user it's more intuitive to reason about
-      the dependencies that each worker has, rather than all the
-      sub workers that a worker has to push to, so here we invert this
-      relationship in order to tell each worker where to send its results. *)
   let build_subs_map t = 
     let sub_tbl = String.Table.create () in
-    Hashtbl.iteri t.descs ~f:(fun ~key:worker_name ~data ->
-      let (Any_worker.Any desc) = data in
+    Hashtbl.iteri t.descs ~f:(fun ~key:worker ~data:(Any_worker.Any desc) ->
       List.iter desc.deps ~f:(fun parent_worker ->
         let updated_subs =
           match Hashtbl.find sub_tbl parent_worker with
-          | None      -> worker_name :: []
-          | Some subs -> worker_name :: subs
+          | None      -> worker :: []
+          | Some subs -> worker :: subs
         in
         Hashtbl.set sub_tbl ~key:parent_worker ~data:updated_subs
       )
@@ -69,8 +64,159 @@ module Builder = struct
     )
   ;;
 
+  let create_dispatcher (desc: _ Worker_desc.t) subs_map =
+    match Hashtbl.find subs_map desc.name with
+    | None      -> fun _id _msg -> return ()
+    | Some subs -> 
+      fun id msg ->
+        let disconnect child = 
+          let remaining = 
+            List.filter subs ~f:(fun (sub, _machine) ->
+              not (String.equal sub child)
+            ) 
+          in
+          Hashtbl.set subs_map ~key:desc.name ~data:remaining
+        in
+        Deferred.List.iter subs ~f:(fun (sub_name, machine) ->
+          let rpc = Rpc_util.create_one_way desc.name desc.output in
+          Rpc_util.one_way_dispatch rpc machine (id, msg)
+          >>| function
+          | Ok (Ok ()) -> ()
+          | error      ->
+            disconnect sub_name;
+            let (err_msg, fail_type) = Rpc_util.match_error error in
+            eprintf 
+              "%s failure: [%s] from %s to %s" 
+               fail_type
+               err_msg
+               desc.name
+               sub_name 
+        )
+  ;;
+
+  let create_basic_impl (desc : _ Worker_desc.t) rpc_name dispatcher f =
+    let rpc = Rpc_util.create_one_way rpc_name desc.input in
+    let impl = Rpc.One_way.implement rpc (fun () (id, msg) ->
+      let run () =
+        match f with
+        | `Spout spout   -> spout msg dispatcher
+        | `Worker worker -> 
+          worker msg 
+          >>= fun result -> 
+          dispatcher id result
+      in
+      Monitor.try_with ~rest:`Log run
+      >>> function
+      | Ok ()   -> ()
+      | Error e -> 
+        eprintf "Unhandled exception in worker: %s\n%!" (Exn.to_string e);
+        shutdown 0
+    )
+    in
+    impl
+  ;;
+
+  let create_basic_impls desc dispatcher func =
+    match func with
+    | `Spout  _ -> [create_basic_impl desc desc.name dispatcher func]
+    | `Worker _ ->
+      List.map desc.deps ~f:(fun dep_name ->
+        create_basic_impl desc dep_name dispatcher func
+      )
+  ;;
+
+  let create_bundled_impls (desc: _ Worker_desc.t) dispatcher (f, bundler) =
+    List.fold desc.deps ~init:[] ~f:(fun acc dep_name ->
+      let rpc = Rpc_util.create_one_way dep_name desc.input in 
+      let impl = Rpc.One_way.implement rpc (fun () (id, msg) ->
+        match bundler id dep_name msg with
+        | `Active     -> ()
+        | `New bundle ->
+          let on_bundle_complete () =
+            bundle
+            >>= fun args_list ->
+            Monitor.try_with ~rest:`Log (fun () ->
+              Bundler.Dyn_application.apply f args_list
+              >>= fun result -> 
+              dispatcher id result
+            )
+            >>| function
+            | Ok ()   -> ()
+            | Error e -> 
+              eprintf "Unhandled exception in worker: %s\n%!" (Exn.to_string e);
+              shutdown 0
+          in
+          match desc.sequencer with
+          | None     -> don't_wait_for(on_bundle_complete ())
+          | Some seq -> 
+            Ordered_sequencer.enqueue seq id on_bundle_complete
+            |> don't_wait_for
+      )
+      in
+      impl :: acc
+    )
+  ;;
+
+  let worker_main impls_map find_machine name =
+    let implementations = Hashtbl.find_exn impls_map name in
+      Rpc.Connection.serve
+        ~implementations 
+        ~initial_connection_state:(fun _ _ -> ())
+        ~where_to_listen:(Tcp.on_port (find_machine name |> Host_and_port.port))
+        ()
+      >>| fun serv ->
+      Host_and_port.create
+        ~host:(Unix.gethostname ())
+        ~port:(Tcp.Server.listening_on serv)
+  ;;
+
+  let build_network t =
+    let machine_map = assign_machines t in
+    let find_machine = Hashtbl.find_exn machine_map in
+    let subworker_map = 
+      Hashtbl.mapi (build_subs_map t) ~f:(fun ~key ~data:sub_names ->
+        List.map sub_names ~f:(fun name -> (name, find_machine name))
+      )
+    in
+    let implementation_map = 
+      Hashtbl.mapi t.descs ~f:(fun ~key ~data:(Any_worker.Any desc) ->
+        let dispatcher = create_dispatcher desc subworker_map in
+        let implementations =
+          match desc.func with
+          | `Simple f       -> create_basic_impls desc dispatcher f
+          | `Bundled bundle -> create_bundled_impls desc dispatcher bundle
+        in 
+        Rpc.Implementations.create_exn
+          ~implementations
+          ~on_unknown_rpc:`Close_connection
+      )
+    in
+    (* Separate the spout workers from the others,
+       as they must be started last and require initialization. *)
+    let (spouts_map, workers_map) = 
+      Hashtbl.partitioni_tf machine_map ~f:(fun ~key ~data ->
+        Hashtbl.mem subworker_map key
+      )
+    in
+    let spouts = Hashtbl.to_alist spouts_map in
+    let workers = Hashtbl.to_alist workers_map in
+    let module Spawner = 
+      Parallel_deprecated.Make(
+        struct
+          include Worker_types
+          let worker_main = worker_main implementation_map find_machine
+        end
+      ) 
+    in
+    Network.
+      { spouts
+      ; workers
+      ; spawner = (module Spawner : Launch.Parallel_sig)
+      }
+  ;;
+
   let default_on_failure name err =
-    printf "%s %s\n%!" name (Error.to_string_hum err)
+    printf "%s: %s\n%!" name (Error.to_string_hum err)
   ;;
 
   let launch t (network : Network.t)
@@ -110,55 +256,16 @@ module Builder = struct
       match desc.init with
       | None      -> failwithf "%s: Spout must be initialized" name ()
       | Some init ->
-        let rpc =
-          Rpc.One_way.create
-            ~name
-            ~version:0
-            ~bin_msg:desc.input
-        in
+        let rpc = Rpc_util.create_one_way name desc.input in
         Rpc_util.one_way_dispatch rpc machine (0, init)
          >>| function
-         | Ok (Ok ())   ->
-           printf "%s: Succesfully initialized spout\n%!" name
-         | Error e      ->
-           failwithf "%s: Connection failure: %s" name (Exn.to_string e) ()
-         | Ok (Error e) ->
-           failwithf "%s: Dispatch failure: %s" name (Error.to_string_hum e) ()
-
+         | Ok (Ok ()) -> printf "%s: Succesfully started spout\n%!" name
+         | error      ->
+           let (err_msg, fail_type) = Rpc_util.match_error error in
+           failwithf "%s: %s failure: %s" name fail_type err_msg ()
     )
     >>= fun () ->
     Deferred.never ()
   ;;
 
-  let build_network t =
-    let module Worker_shell = Launch.Worker_shell () in
-    let machine_map = assign_machines t in
-    let find_machine = Hashtbl.find_exn machine_map in
-    let subworker_map = build_subs_map t in
-    Hashtbl.iteri t.descs ~f:(fun ~key:name ~data:(Any_worker.Any desc) ->
-      let sub_workers =
-        Hashtbl.find subworker_map name
-        |> Option.value ~default:[]
-        |> List.map ~f:(fun sub -> (sub, find_machine sub))
-      in
-      let port = find_machine name |> Host_and_port.port in
-      Worker_shell.implement desc port sub_workers
-    );
-    (* Separate the spout workers from the others,
-       as they must be started last and require initialization. *)
-    let (spouts_map, workers_map) = 
-      Hashtbl.partitioni_tf machine_map ~f:(fun ~key ~data:_ ->
-        Hashtbl.mem subworker_map key
-      )
-    in
-    let spouts = Hashtbl.to_alist spouts_map in
-    let workers = Hashtbl.to_alist workers_map in
-    let module Spawner = Parallel_deprecated.Make(Worker_shell) in
-    Network.
-      { spouts
-      ; workers
-      ; spawner = (module Spawner : Launch.Parallel_sig)
-      }
-  ;;
-
- end;;
+end;;

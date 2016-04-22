@@ -2,38 +2,6 @@ open Core.Std
 open Async.Std
 open Rpc_parallel_core_deprecated.Std
 
-module Worker_shell : functor () -> sig
-
-  (** Parallel_deprecated.Make takes in a module with a signature
-      that includes Worker_types and worker_main as we have below. 
-      At the time of application of Parallel.Make, the module
-      passed to it must have all the information it needs to 
-      spawn workers. This module is used to generate such a
-      module, and is a functor due to the necessity of some
-      top level data structures: by using a functor instead of
-      a regular module, we essentially make all the data private
-      within a call of Builder.build_network. *)
-
-  include module type of Worker_types
-
-  (** [implement desc port subworkers] will create an RPC 
-      implementation for the worker described by desc, which
-      will be hosted on [port]. The implementation will perform
-      the computation of the worker, and then relay the result 
-      to [subs]. Uncaught exceptions raised dduring the computation
-      will be logged, and result in the worker being shut down. *)
-  val implement : 
-    ('i, 'o) Worker_desc.t 
-    -> int 
-    -> (string * Host_and_port.t) list 
-    -> unit
-
-  (** [worker_main name] selects an RPC implementation using name,
-      starts the server and returns the Host_and_port.t it is hosted on. *)
-  val worker_main : worker_arg -> worker_ret Deferred.t
-
-end
-
 module type Parallel_sig = sig
 
   (** The signature of the output from Parallel_deprecated.Make *)

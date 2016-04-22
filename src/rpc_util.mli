@@ -8,3 +8,14 @@ val one_way_dispatch :
   -> Host_and_port.t 
   -> 'a 
   -> (unit Or_error.t, Exn.t) Result.t Deferred.t
+ 
+(** [create_one_way name bin_msg] unlabeled helper for
+    Rpc.One_way.create to hide away the clunky call. *)
+val create_one_way : 
+  string 
+  -> 'a Bin_prot.Type_class.t 
+  -> 'a Rpc.One_way.t
+
+(** [match_error e] unpacks the nested result/error from one_way_dispatch.*)
+val match_error : (unit Or_error.t, Exn.t) Result.t  -> string * string
+  
