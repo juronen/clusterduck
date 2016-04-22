@@ -27,7 +27,7 @@ type t =
   ; machines : Host_and_port.t Queue.t
   }
 
-let create ?debugger ~machines =
+let create ?debugger machines =
   let machines =
     List.map machines ~f:(fun (host, port) -> Host_and_port.create ~host ~port)
     |> Queue.of_list
@@ -80,7 +80,7 @@ let create_dispatcher (desc: _ Worker_desc.t) subs_map ?debug_box () =
       in
       begin
         match debug_box with
-        | None            -> return ()
+        | None     -> return ()
         | Some box -> 
           Rpc_util.one_way_dispatch 
             Debugger.Debug_rpc.rpc 
@@ -99,10 +99,10 @@ let create_dispatcher (desc: _ Worker_desc.t) subs_map ?debug_box () =
           let (err_msg, fail_type) = Rpc_util.match_error error in
           eprintf 
             "%s failure: [%s] from %s to %s" 
-             fail_type
-             err_msg
-             desc.name
-             sub_name 
+            fail_type
+            err_msg
+            desc.name
+            sub_name 
       )
 ;;
 
@@ -181,7 +181,7 @@ let worker_main impls_map find_machine name =
   Host_and_port.create ~host:(Unix.gethostname ()) ~port
 ;;
 
-let build_network t () =
+let build_network t = 
   let machine_map = assign_machines t in
   let find_machine = Hashtbl.find_exn machine_map in
   let subworker_map = 

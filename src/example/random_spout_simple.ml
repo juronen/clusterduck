@@ -1,6 +1,6 @@
 open Core.Std
 open Async.Std
-open Clusterduck
+open Std
 
 module Simple_test = struct
 
@@ -55,10 +55,10 @@ let generate_local_cluster n =
 ;;
 
 let () =
-  let builder = Builder.create ~machines:(generate_local_cluster 2) in
+  let builder = Builder.create (generate_local_cluster 2) in
   Builder.add_worker builder Simple_test.spout_desc;
   Builder.add_worker builder Simple_test.count_desc;
-  let network = Builder.build_network builder in
+  let (network : Network.t) = Builder.build_network builder in
   let module Spawner = (val network.spawner) in
   let command =
     Command.async ~summary:"One spout with one subworker"

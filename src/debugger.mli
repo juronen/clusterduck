@@ -24,7 +24,7 @@ val start_debug_server : t -> unit Deferred.t
 
 (** [create names f port] creates a debugger that will
     make the output of the workers be sent back to the master,
-    such that f is called as such:
+    so that f is called as such:
 
       f worker_name msg_id msg  
                                                            

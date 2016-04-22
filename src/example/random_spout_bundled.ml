@@ -114,13 +114,11 @@ let () =
       ~f:(printf "N: %s ID: %d MSG: %s\n%!") 
       ~port:7000
   in
-  let builder = Builder.create ~debugger ~machines:(generate_local_cluster 3) in
+  let builder = Builder.create ~debugger (generate_local_cluster 3) in
   Builder.add_worker builder Bundler_test.spout_desc_a;
   Builder.add_worker builder Bundler_test.spout_desc_b;
   Builder.add_worker builder Bundler_test.count_desc;
- (* Debugger.create ~workers:["spout1"] ~f:(printf "N: %s ID: %d MSG: %s\n%!") ~port:7000
-  >>> fun debugger ->*)
-  let network = Builder.build_network builder  () in
+  let network = Builder.build_network builder in
   let module Spawner = (val network.spawner) in
   let command =
     Command.async ~summary:"One subworker consuming integers from two spouts"

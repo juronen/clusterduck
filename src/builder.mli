@@ -21,7 +21,7 @@ type t
     can be used to build a Clusterduck network. *)
 val create : 
   ?debugger:Debugger.t 
-  -> machines:(string * int) list -> t
+  -> (string * int) list -> t
 
 (** [add_worker t desc] adds desc to the network. *)
 val add_worker : t -> (('i, 'o) Worker_desc.t) -> unit
@@ -47,6 +47,5 @@ val launch :
     its result to each of the subworkers over one-way RPC. *)
 val build_network : 
   t 
-  -> unit
   -> Network.t
 
