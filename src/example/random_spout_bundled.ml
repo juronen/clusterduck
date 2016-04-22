@@ -4,7 +4,7 @@
 
 open Core.Std
 open Async.Std
-open Clusterduck
+open Std
 
 module Bundler_test = struct 
 
