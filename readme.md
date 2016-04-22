@@ -50,6 +50,19 @@ passed to it. The dispatcher is used by a spout to relay messages to
 subworkers. The dispatching for basic workers (i.e. non-spouts) is handled
 behind the scenes.
 
+The user is responsible for generating sequence ids in spouts. While a 
+simple counter is probably suitable for most cases, naturally you can 
+create arbitrary integer representations or hashes based on whichever
+relation there is between multiple data points. 
+
+Contrived example: 
+Say someone wanted to build photo collages of pictures taken
+at the same wall-time around the world. They could have a bunch of spouts
+sending pictures each hour to a downstream worker, with the sequence id being
+the current time at the location, e.g. 11. This way the downstream worker
+will end up with bundles that contain the 11 o'clock image from each spout,
+and these images can now be stitched together.
+
 ### Sequencing work
 
 For bundled workers, the framework provides the option to process messages
