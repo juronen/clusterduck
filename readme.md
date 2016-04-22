@@ -55,3 +55,9 @@ behind the scenes.
 For bundled workers, the framework provides the option to process messages
 one by one, in a strictly sequential order, i.e. the message with sequence
 id `n` will only be processed after id `n - 1` has been processed.
+
+## Debugging
+
+The `Debugger` module can be used to create a debugger and pass it to 
+`Builder.create`, so that the output of chosen workers is sent back to the
+master and passed to a user defined function.
