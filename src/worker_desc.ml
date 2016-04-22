@@ -16,13 +16,14 @@ module Func_container = struct
 end;;
 
 type ('input, 'output) t =
-  { name      : string 
-  ; input     : (int * 'input) Bin_prot.Type_class.t
-  ; output    : (int * 'output) Bin_prot.Type_class.t
-  ; deps      : string list
-  ; init      : 'input option
-  ; func      : ('input, 'output) Func_container.t
-  ; sequencer : Ordered_sequencer.t option
+  { name       : string 
+  ; input      : (int * 'input) Bin_prot.Type_class.t
+  ; output     : (int * 'output) Bin_prot.Type_class.t
+  ; deps       : string list
+  ; init       : 'input option
+  ; func       : ('input, 'output) Func_container.t
+  ; sequencer  : Ordered_sequencer.t option
+  ; str_of_out : 'output -> string
   }
 
 module type Worker_IO = sig
@@ -52,6 +53,7 @@ let create_simple
   ; init
   ; func = `Simple f 
   ; sequencer = None
+  ; str_of_out = fun o -> T.sexp_of_output o |> Sexp.to_string
   }
 ;;
 
@@ -74,6 +76,7 @@ let create_bundled
   ; init = None
   ; func = `Bundled (f, bundler)
   ; sequencer
+  ; str_of_out = fun o -> T.sexp_of_output o |> Sexp.to_string
   }
 ;; 
   

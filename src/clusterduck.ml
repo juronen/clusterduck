@@ -24,15 +24,17 @@ module Builder = struct
 
   type t =
     { descs    : Any_worker.t String.Table.t
+    ; debugger : Debugger.t option
     ; machines : Host_and_port.t Queue.t
     }
 
-  let create ~machines =
+  let create ?debugger ~machines =
     let machines =
       List.map machines ~f:(fun (host, port) -> Host_and_port.create ~host ~port)
       |> Queue.of_list
     in
     { descs = String.Table.create ()
+    ; debugger
     ; machines
     }
   ;;
@@ -64,7 +66,7 @@ module Builder = struct
     )
   ;;
 
-  let create_dispatcher (desc: _ Worker_desc.t) subs_map =
+  let create_dispatcher (desc: _ Worker_desc.t) subs_map ?debug_box () =
     match Hashtbl.find subs_map desc.name with
     | None      -> fun _id _msg -> return ()
     | Some subs -> 
@@ -77,6 +79,17 @@ module Builder = struct
           in
           Hashtbl.set subs_map ~key:desc.name ~data:remaining
         in
+        begin
+          match debug_box with
+          | None            -> return ()
+          | Some box -> 
+            Rpc_util.one_way_dispatch 
+              Debugger.Debug_rpc.rpc 
+              box 
+              (desc.name, id, desc.str_of_out msg)
+            >>| fun _ -> ()
+        end 
+        >>= fun () ->
         Deferred.List.iter subs ~f:(fun (sub_name, machine) ->
           let rpc = Rpc_util.create_one_way desc.name desc.output in
           Rpc_util.one_way_dispatch rpc machine (id, msg)
@@ -125,7 +138,7 @@ module Builder = struct
       )
   ;;
 
-  let create_bundled_impls (desc: _ Worker_desc.t) dispatcher (f, bundler) =
+  let create_bundled_impls (desc: _ Worker_desc.t) dispatcher f bundler =
     List.fold desc.deps ~init:[] ~f:(fun acc dep_name ->
       let rpc = Rpc_util.create_one_way dep_name desc.input in 
       let impl = Rpc.One_way.implement rpc (fun () (id, msg) ->
@@ -159,18 +172,17 @@ module Builder = struct
 
   let worker_main impls_map find_machine name =
     let implementations = Hashtbl.find_exn impls_map name in
-      Rpc.Connection.serve
-        ~implementations 
-        ~initial_connection_state:(fun _ _ -> ())
-        ~where_to_listen:(Tcp.on_port (find_machine name |> Host_and_port.port))
-        ()
-      >>| fun serv ->
-      Host_and_port.create
-        ~host:(Unix.gethostname ())
-        ~port:(Tcp.Server.listening_on serv)
+    let port = find_machine name |> Host_and_port.port in
+    Rpc.Connection.serve
+      ~implementations 
+      ~initial_connection_state:(fun _ _ -> ())
+      ~where_to_listen:(Tcp.on_port port)
+      ()
+    >>| fun _server ->
+    Host_and_port.create ~host:(Unix.gethostname ()) ~port
   ;;
 
-  let build_network t =
+  let build_network t () =
     let machine_map = assign_machines t in
     let find_machine = Hashtbl.find_exn machine_map in
     let subworker_map = 
@@ -180,11 +192,22 @@ module Builder = struct
     in
     let implementation_map = 
       Hashtbl.mapi t.descs ~f:(fun ~key ~data:(Any_worker.Any desc) ->
-        let dispatcher = create_dispatcher desc subworker_map in
+        let dispatcher =
+          match t.debugger with 
+          | None                         ->
+            create_dispatcher desc subworker_map ()
+          | Some (debug_box, workers, _) ->
+            if List.mem workers key
+            then
+              create_dispatcher desc subworker_map ~debug_box ()
+            else
+              create_dispatcher desc subworker_map ()
+        in
         let implementations =
           match desc.func with
-          | `Simple f       -> create_basic_impls desc dispatcher f
-          | `Bundled bundle -> create_bundled_impls desc dispatcher bundle
+          | `Simple f             -> create_basic_impls desc dispatcher f
+          | `Bundled (f, bundler) -> 
+            create_bundled_impls desc dispatcher f bundler
         in 
         Rpc.Implementations.create_exn
           ~implementations
@@ -222,6 +245,12 @@ module Builder = struct
   let launch t (network : Network.t)
     ?(cd="/tmp/clusterduck")
     ?(on_failure=default_on_failure) () =
+    begin
+      match t.debugger with
+      | None          -> return ()
+      | Some debugger -> Debugger.start_debug_server debugger
+    end
+    >>= fun _ -> 
     let module Spawner = (val network.spawner : Launch.Parallel_sig) in
     let launch workers = 
       Deferred.List.map workers ~f:(fun (name, machine) ->
@@ -254,12 +283,12 @@ module Builder = struct
     Deferred.List.iter running_spouts ~f:(fun (name, machine) ->
       let (Any_worker.Any desc) = Hashtbl.find_exn t.descs name in
       match desc.init with
-      | None      -> failwithf "%s: Spout must be initialized" name ()
+      | None      -> failwithf "%s: Spout has no initializer" name ()
       | Some init ->
         let rpc = Rpc_util.create_one_way name desc.input in
         Rpc_util.one_way_dispatch rpc machine (0, init)
          >>| function
-         | Ok (Ok ()) -> printf "%s: Succesfully started spout\n%!" name
+         | Ok (Ok ()) -> printf "%s: Successfully started spout\n%!" name
          | error      ->
            let (err_msg, fail_type) = Rpc_util.match_error error in
            failwithf "%s: %s failure: %s" name fail_type err_msg ()

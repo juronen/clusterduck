@@ -26,13 +26,14 @@ module Func_container : sig
 end
 
 type ('input, 'output) t = 
-  { name : string
-  ; input : (int * 'input) Bin_prot.Type_class.t
-  ; output : (int * 'output) Bin_prot.Type_class.t
-  ; deps : string list
-  ; init : 'input option
-  ; func : ('input, 'output) Func_container.t
-  ; sequencer : Ordered_sequencer.t option
+  { name       : string
+  ; input      : (int * 'input) Bin_prot.Type_class.t
+  ; output     : (int * 'output) Bin_prot.Type_class.t
+  ; deps       : string list
+  ; init       : 'input option
+  ; func       : ('input, 'output) Func_container.t
+  ; sequencer  : Ordered_sequencer.t option
+  ; str_of_out : 'output -> string
   }
 
 module type Worker_IO = sig

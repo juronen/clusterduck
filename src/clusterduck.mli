@@ -21,7 +21,9 @@ module Builder : sig
 
   (** [create ~machines] creates a Builder.t that
       can be used to build a Clusterduck network. *)
-  val create : machines:(string * int) list -> t
+  val create : 
+    ?debugger:Debugger.t 
+    -> machines:(string * int) list -> t
 
   (** [add_worker t desc] adds desc to the network. *)
   val add_worker : t -> (('i, 'o) Worker_desc.t) -> unit
@@ -45,6 +47,9 @@ module Builder : sig
       of each worker are used to determine a list of subworkers for
       a given worker. Once the worker is done processing, it will send
       its result to each of the subworkers over one-way RPC. *)
-  val build_network : t -> Network.t
+  val build_network : 
+    t 
+    -> unit
+    -> Network.t
 
 end
