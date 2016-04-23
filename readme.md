@@ -3,7 +3,7 @@
 #### A distributed computing library built atop of Jane Street's Rpc_parallel
 
 This library provides the tools to create computational "topologies"
-across a network, similar to the model that Apache Storm is based on.
+(DAGs) across a network, similar to the model that Apache Storm is based on.
 The development of this framework was a response to the rather large
 overhead/footprint of setting up Storm, relative to my humble needs.
 
@@ -65,8 +65,8 @@ and these images can now be stitched together.
 
 ### Sequencing work
 
-For bundled workers, the framework provides the option to process messages
-one by one, in a strictly sequential order, i.e. the message with sequence
+For bundled workers, the framework provides the option to process bundles/batches
+one by one, in a strictly sequential order, i.e. the bundle with sequence
 id `n` will only be processed after id `n - 1` has been processed.
 
 ## Debugging
