@@ -69,7 +69,7 @@ For bundled workers, the framework provides the option to process bundles/batche
 one by one, in a strictly sequential order, i.e. the bundle with sequence
 id `n` will only be processed after id `n - 1` has been processed.
 
-## Debugging
+### Debugging
 
 The `Debugger` module can be used to create a debugger and pass it to 
 `Builder.create`, so that the output of chosen workers is sent back to the
