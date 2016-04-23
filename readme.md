@@ -74,3 +74,7 @@ id `n` will only be processed after id `n - 1` has been processed.
 The `Debugger` module can be used to create a debugger and pass it to 
 `Builder.create`, so that the output of chosen workers is sent back to the
 master and passed to a user defined function.
+
+stdout and stderr are redirected to worker_name.out and worker_name.err 
+files in the directory passed to `Builder.launch`, which defaults to
+`/tmp/clusterduck`.
