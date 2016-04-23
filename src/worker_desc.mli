@@ -43,11 +43,13 @@ module type Worker_IO = sig
 
 end
 
-(** [create_simple] returns a t that describes a worker which
-    may either be a spout (data source), or a worker that depends
+(** [create_simple w_module name func] returns a t that describes a worker 
+    which may either be a spout (data source), or a worker that depends
     on spouts or other workers for its inputs. To create a spout,
-    pass the function in as `Spout f, and to create a basic worker
-    use `Worker f. *)
+    pass func in as `Spout f, and to create a basic worker
+    use `Worker f. Pass [deps] to declare the workers that this one depends
+    on. [init] must be passed for spouts, which will be the value that
+    is passed to the spout's function on the first and only call.  *)
 val create_simple :
   (module Worker_IO with type input = 'a and type output = 'b) 
   -> name:string 
@@ -56,11 +58,13 @@ val create_simple :
   -> ('a, 'b) Func_container.func_type 
   -> ('a, 'b) t
 
-(** [create_bundled] is used to create a worker that depends on multiple
-    upstream workers, which together produce batches (bundles) of
-    messages which this worker consumes. Up to 5 upstream workers can be
-    bundled: for example, a function that bundles 3 would be passed in as
-    `A3 f. *)
+(** [create_bundled w_module name func] is used to create a worker that
+    depends on multiple upstream workers, which together produce batches
+    (bundles) of messages which this worker consumes. Up to 5 upstream
+    workers can be bundled: for example, if func bundles 3, it would be
+    passed in as `A3 f. Pass [sequencer_start] to enable sequential
+    execution of tasks in strict increasing order of sequence ids.
+    See ordered_sequencer.mli for more. *)
 val create_bundled :
   (module Worker_IO with type input = 'a and type output = 'b) 
   -> name:string 
