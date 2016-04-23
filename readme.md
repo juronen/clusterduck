@@ -76,5 +76,5 @@ The `Debugger` module can be used to create a debugger and pass it to
 master and passed to a user defined function.
 
 stdout and stderr are redirected to worker_name.out and worker_name.err 
-files in the directory passed to `Builder.launch`, which defaults to
-`/tmp/clusterduck`.
+files on the worker's machine in the directory passed to `Builder.launch`, 
+which defaults to `/tmp/clusterduck`.
