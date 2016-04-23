@@ -11,6 +11,9 @@ In a nutshell, given a set of functions and their interdependencies,
 Clusterduck will take care of the RPC plumbing required in order
 to complete the computation using workers on multiple machines. 
 
+NOTE: Make sure the master is able to SSH into any of the machines
+used for the network, and that the ports used are open.
+
 ## Workers
 
 There exist two distinct types of workers: *spouts* and simple *workers*.
