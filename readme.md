@@ -14,6 +14,9 @@ to complete the computation using workers on multiple machines.
 NOTE: Make sure the master is able to SSH into any of the machines
 used for the network, and that the ports used are open.
 
+Examples can be compiled with 
+`corebuild -package core -package async -package rpc_parallel.core -tag thread example/random_spout_bundled.native`
+
 ## Workers
 
 There exist two distinct types of workers: *spouts* and simple *workers*.
