@@ -42,7 +42,7 @@ that call the function of worker C upon receiving a message from A or B.
 If downstream workers from C existed, the result of the computation done
 by worker C would be automatically sent to the immediate subworkers.
 
-### Bundling data
+## Bundling data
 
 A worker can simply process the data it receives from its dependencies
 without any notion of relatedness between messages, or it can *bundle*
@@ -69,13 +69,13 @@ the current time at the location, e.g. 11. This way the downstream worker
 will end up with bundles that contain the 11 o'clock image from each spout,
 and these images can now be stitched together.
 
-### Sequencing work
+## Sequencing work
 
 For bundled workers, the framework provides the option to process bundles/batches
 one by one, in a strictly sequential order, i.e. the bundle with sequence
 id `n` will only be processed after id `n - 1` has been processed.
 
-### Debugging
+## Debugging
 
 The `Debugger` module can be used to create a debugger and pass it to 
 `Builder.create`, so that the output of chosen workers is sent back to the
@@ -84,3 +84,14 @@ master and passed to a user defined function.
 stdout and stderr are redirected to worker_name.out and worker_name.err 
 files on the worker's machine in the directory passed to `Builder.launch`, 
 which defaults to `/tmp/clusterduck`.
+
+## Exception handling
+
+Currently the call to a worker's function is wrapped in a `Monitor.try_with`,
+and if it catches an exception, it will log it and shut the worker down. 
+The `on_failure` passed to `Builder.launch` is passed to Rpc_parallel,
+and is only called in the event that something shuts down a worker. 
+Rpc_parallel.core seems to somehow silence exceptions raised in workers that are
+set up the way Clusterduck does: without the Monitor.try_with that I added,
+they do not cause the worker to shut down, nor do they trigger `on_failure` or
+any other kind of logging.
