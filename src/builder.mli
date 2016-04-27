@@ -30,6 +30,10 @@ val add_worker : t -> (('i, 'o) Worker_desc.t) -> unit
     the spouts, and then send each spout an Rpc message
     to initialize and start them.
 
+    Pass in [cd] to specify the directory where logs are
+    placed, along with copies of the executable.
+    Defaults to /tmp/clusterduck.
+
     The function passed in as [on_failure] is called when
     the worker experiences a failure that causes it to shut down. *)
 val launch : 
