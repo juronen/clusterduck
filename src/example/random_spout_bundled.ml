@@ -102,9 +102,7 @@ module Bundler_test = struct
 end;;
 
 let generate_local_cluster n =
-  let hosts = List.init n ~f:(fun _ -> "localhost") in
-  let ports = List.init n ~f:(Int.(+) 5000) in
-  List.zip_exn hosts ports
+  List.init n ~f:(fun x -> ("localhost", 5000 + x))
 ;;
 
 let () =
