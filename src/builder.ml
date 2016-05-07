@@ -58,7 +58,7 @@ module Network = struct
   type t =
     { spouts   : (string * Host_and_port.t) list
     ; workers  : (string * Host_and_port.t) list
-    ; spawner  : (module Launch.Parallel_sig)
+    ; spawner  : (module Parallel_sig)
     } 
 
 end;;
@@ -300,7 +300,7 @@ let launch t (network : Network.t)
     | Some debugger -> Debugger.start_debug_server debugger
   end
   >>= fun () -> 
-  let module Spawner = (val network.spawner : Launch.Parallel_sig) in
+  let module Spawner = (val network.spawner : Parallel_sig) in
   let launch workers = 
     Deferred.List.map workers ~f:(fun (name, machine) ->
       printf "Spawning %s\n%!" name;
