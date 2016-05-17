@@ -92,6 +92,8 @@ let add_worker t (desc : ('i, 'o) Worker_desc.t) =
   Hashtbl.set t.descs ~key:desc.name ~data:(Any_worker.Any desc)
 ;;
 
+(* Build a map that links every worker to any "subworkers" that
+ * it has to send its result to. *)
 let build_subs_map t = 
   let sub_tbl = String.Table.create () in
   Hashtbl.iteri t.descs ~f:(fun ~key:worker ~data:(Any_worker.Any desc) ->
@@ -115,6 +117,8 @@ let assign_machines t =
   )
 ;;
 
+(* Returns a function that can be used to send desc's result to all of
+ * its subworkers. *)
 let create_dispatcher (desc: _ Worker_desc.t) subs_map ?debug_box () =
   match Hashtbl.find subs_map desc.name with
   | None      -> fun _id _msg -> return ()
@@ -267,7 +271,10 @@ let build_network t =
      as they must be started last and require initialization. *)
   let (spouts_map, workers_map) = 
     Hashtbl.partitioni_tf machine_map ~f:(fun ~key ~data ->
-      Hashtbl.mem subworker_map key
+      let (Any_worker.Any desc) = Hashtbl.find_exn t.descs key in
+      match desc.func with
+      | `Simple (`Spout _) -> true
+      | _                  -> false
     )
   in
   let spouts = Hashtbl.to_alist spouts_map in
