@@ -160,6 +160,8 @@ let create_dispatcher (desc: _ Worker_desc.t) subs_map ?debug_box () =
       )
 ;;
 
+(* Creates an RPC implementation that hosts desc.func when it does
+ * not use any bundling (nor sequencing). *)
 let create_basic_impl (desc : _ Worker_desc.t) rpc_name dispatcher f =
   let rpc = Rpc_util.create_one_way rpc_name desc.input in
   let impl = Rpc.One_way.implement rpc (fun () (id, msg) ->
@@ -191,6 +193,7 @@ let create_basic_impls desc dispatcher func =
     )
 ;;
 
+(* Create an RPC implementation that uses a Bundler *)
 let create_bundled_impls (desc: _ Worker_desc.t) dispatcher f bundler =
   List.fold desc.deps ~init:[] ~f:(fun acc dep_name ->
     let rpc = Rpc_util.create_one_way dep_name desc.input in 
